@@ -124,7 +124,7 @@ services:
   app:
     image: bigsk1/tks-gpt:latest
     environment:
-      - OPENAI_API_KEY=<your_openai_api_key>
+      - OPENAI_API_KEY=<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>
     ports:
       - "5000:5000"
     restart: unless-stopped
