@@ -3,6 +3,7 @@ require_once __DIR__ . '/../src/Database.php';
 require_once __DIR__ . '/../src/VoteService.php';
 require_once __DIR__ . '/../src/PaymentService.php';
 require_once __DIR__ . '/../src/AIModerationService.php';
+require_once __DIR__ . '/../src/MAXMessengerService.php';
 
 session_start();
 
@@ -67,6 +68,7 @@ $db = Database::getInstance();
 $voteService = new VoteService();
 $paymentService = new PaymentService();
 $aiService = new AIModerationService();
+$maxService = new MAXMessengerService();
 $config = require __DIR__ . '/../config/config.php';
 
 $message = '';
@@ -81,7 +83,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_settings'])) {
         'yookassa_secret_key',
         'gigachat_client_id',
         'gigachat_client_secret',
-        'yandex_api_key'
+        'yandex_api_key',
+        'max_api_url',
+        'max_bot_token',
+        'max_bot_secret'
     ];
     
     foreach ($settingsToUpdate as $key) {
@@ -94,6 +99,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_settings'])) {
     
     $message = "Настройки успешно сохранены";
     $messageType = 'success';
+}
+
+// Handle site settings update
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_site_settings'])) {
+    $siteSettings = $db->fetchAll("SELECT * FROM site_settings");
+    $existingKeys = array_column($siteSettings, 'setting_key');
+    
+    foreach ($_POST as $key => $value) {
+        if (strpos($key, 'site_') === 0 || strpos($key, 'enable_') === 0 || strpos($key, 'contact_') === 0 || 
+            strpos($key, 'primary_') === 0 || strpos($key, 'secondary_') === 0 || strpos($key, 'maintenance_') === 0 ||
+            strpos($key, 'auto_') === 0 || strpos($key, 'min_') === 0 || strpos($key, 'ai_') === 0 ||
+            strpos($key, 'require_') === 0 || strpos($key, 'newsletter_') === 0 || strpos($key, 'smtp_') === 0 ||
+            strpos($key, 'sms_') === 0 || strpos($key, 'whatsapp_') === 0 || strpos($key, 'viber_') === 0 ||
+            strpos($key, 'payment_') === 0 || strpos($key, 'installments_') === 0 || strpos($key, 'footer_') === 0 ||
+            strpos($key, 'privacy_') === 0 || strpos($key, 'terms_') === 0 || strpos($key, 'working_') === 0 ||
+            strpos($key, 'site_logo') === 0) {
+            
+            if (in_array($key, $existingKeys)) {
+                $db->update('site_settings', [
+                    'setting_value' => $value
+                ], 'setting_key = :key', ['key' => $key]);
+            } else {
+                $db->insert('site_settings', [
+                    'setting_key' => $key,
+                    'setting_value' => $value,
+                    'setting_category' => 'general',
+                    'setting_type' => 'string'
+                ]);
+            }
+        }
+    }
+    
+    $message = "Настройки сайта обновлены";
+    $messageType = 'success';
+}
+
+// Handle content moderation action
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['moderate_action'])) {
+    $contentId = (int)$_POST['content_id'];
+    $contentType = $_POST['content_type'];
+    $action = $_POST['action'];
+    $reason = $_POST['reason'] ?? '';
+    $moderatorId = $_SESSION['user_id'] ?? 1; // Default to admin
+    
+    $db->insert('moderation_logs', [
+        'content_type' => $contentType,
+        'content_id' => $contentId,
+        'action' => $action,
+        'reason' => $reason,
+        'moderator_id' => $moderatorId
+    ]);
+    
+    $statusMap = [
+        'approved' => 'approved',
+        'rejected' => 'rejected',
+        'flagged' => 'flagged',
+        'deleted' => 'rejected'
+    ];
+    
+    if (in_array($contentType, ['message', 'review', 'question'])) {
+        $db->update($contentType . 's', [
+            'ai_moderation_status' => $statusMap[$action] ?? 'flagged'
+        ], 'id = :id', ['id' => $contentId]);
+    }
+    
+    $message = "Контент помечен как " . $action;
+    $messageType = 'success';
+}
+
+// Log admin action
+function logAdminAction($db, $adminId, $actionType, $description, $targetTable = null, $targetId = null) {
+    $db->insert('admin_actions_log', [
+        'admin_id' => $adminId,
+        'action_type' => $actionType,
+        'action_description' => $description,
+        'target_table' => $targetTable,
+        'target_id' => $targetId,
+        'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? ''
+    ]);
 }
 
 // Get all settings
@@ -194,7 +279,9 @@ $recentPayments = $db->fetchAll("
         <div class="container">
             <ul>
                 <li><a href="index.php">Главная</a></li>
-                <li><a href="admin.php?tab=settings">Настройки</a></li>
+                <li><a href="admin.php?tab=settings">⚙️ Настройки</a></li>
+                <li><a href="admin.php?tab=site_settings">🎨 Сайт</a></li>
+                <li><a href="admin.php?tab=max_messenger">📱 MAX Messenger</a></li>
                 <li><a href="admin.php?tab=entrances">Подъезды</a></li>
                 <li><a href="admin.php?tab=payments">Платежи</a></li>
                 <li><a href="admin.php?tab=moderation">Модерация</a></li>
@@ -318,6 +405,25 @@ $recentPayments = $db->fetchAll("
         </div>
         
         <?php elseif ($activeTab === 'payments'): ?>
+
+        <?php elseif ($activeTab === 'site_settings'): ?>
+        <div class="card">
+            <h2>🎨 Настройки сайта</h2>
+            <p style="color:#7f8c8d;">Здесь можно настроить внешний вид и поведение сайта. Полный функционал доступен через API.</p>
+        </div>
+
+        <?php elseif ($activeTab === 'moderation'): ?>
+        <div class="card">
+            <h2>🛡️ Модерация контента</h2>
+            <p style="color:#7f8c8d;">Панель модерации контента с AI-помощником.</p>
+        </div>
+
+        <?php elseif ($activeTab === 'max_messenger'): ?>
+        <div class="card">
+            <h2>📱 MAX Messenger</h2>
+            <p style="color:#7f8c8d;">Интеграция с MAX Messenger для уведомлений жильцов.</p>
+        </div>
+
         <div class="card">
             <h2>💳 Последние платежи</h2>
             <table>
