@@ -11,12 +11,15 @@ class PaymentService {
      * Create a payment via YooKassa
      */
     public function createPayment(int $userId, int $entranceId, float $amount, string $description = ''): array {
-        $config = require __DIR__ . '/../config/config.php';
-        
-        if (empty($config['app']['yookassa_shop_id']) || empty($config['app']['yookassa_secret_key'])) {
+        require_once __DIR__ . '/Config.php';
+        $yookassaShopId = Config::get('yookassa_shop_id', '');
+        $yookassaSecretKey = Config::get('yookassa_secret_key', '');
+        $appUrl = Config::get('url', 'http://localhost');
+
+        if (empty($yookassaShopId) || empty($yookassaSecretKey)) {
             throw new Exception('YooKassa credentials not configured');
         }
-        
+
         // Create payment record in database
         $paymentId = $this->db->insert('payments', [
             'user_id' => $userId,
@@ -25,7 +28,7 @@ class PaymentService {
             'currency' => 'RUB',
             'payment_status' => 'pending'
         ]);
-        
+
         // Prepare YooKassa request
         $paymentData = [
             'amount' => [
@@ -35,7 +38,7 @@ class PaymentService {
             'capture' => true,
             'confirmation' => [
                 'type' => 'redirect',
-                'return_url' => $config['app']['url'] . '/public/payment_success.php?payment_id=' . $paymentId
+                'return_url' => $appUrl . '/public/payment_success.php?payment_id=' . $paymentId
             ],
             'description' => $description ?: 'Оплата установки домофона',
             'metadata' => [
@@ -43,7 +46,7 @@ class PaymentService {
                 'entrance_id' => $entranceId
             ]
         ];
-        
+
         // Make request to YooKassa API
         $ch = curl_init('https://api.yookassa.ru/v3/payments');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -52,28 +55,28 @@ class PaymentService {
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'Idempotence-Key: ' . uniqid(),
-            'Authorization: Basic ' . base64_encode($config['app']['yookassa_shop_id'] . ':' . $config['app']['yookassa_secret_key'])
+            'Authorization: Basic ' . base64_encode($yookassaShopId . ':' . $yookassaSecretKey)
         ]);
-        
+
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        
+
         if ($httpCode !== 200) {
             $this->db->update('payments', [
                 'payment_status' => 'failed'
             ], 'id = :id', ['id' => $paymentId]);
-            
+
             throw new Exception('YooKassa API error: ' . $response);
         }
-        
+
         $result = json_decode($response, true);
-        
+
         // Update payment with YooKassa payment ID
         $this->db->update('payments', [
             'yookassa_payment_id' => $result['id']
         ], 'id = :id', ['id' => $paymentId]);
-        
+
         return [
             'payment_id' => $paymentId,
             'yookassa_id' => $result['id'],
@@ -86,9 +89,28 @@ class PaymentService {
      * Handle payment webhook from YooKassa
      */
     public function handleWebhook(array $event): void {
+        require_once __DIR__ . '/Config.php';
+
+        // Verify webhook signature
+        $rawBody = file_get_contents('php://input');
+        $signatureHeader = $_SERVER['HTTP_X_YOOKASSA_SIGNATURE'] ?? '';
+        $yookassaSecretKey = Config::get('yookassa_secret_key', '');
+
+        if (empty($yookassaSecretKey)) {
+            error_log('YooKassa webhook: secret key not configured');
+            return;
+        }
+
+        $expectedSignature = hash_hmac('sha256', $rawBody, $yookassaSecretKey);
+
+        if (!hash_equals($expectedSignature, $signatureHeader)) {
+            error_log('YooKassa webhook: signature verification failed');
+            return;
+        }
+
         $object = $event['object'] ?? [];
         $yookassaPaymentId = $object['id'] ?? '';
-        
+
         if (empty($yookassaPaymentId)) {
             return;
         }

@@ -58,17 +58,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if ($apartment) {
             try {
-                $voteService->castVote($entranceId, $apartment['id'], $vote, $userId);
-                $message = "Ваш голос принят! Спасибо за участие.";
-                $messageType = 'success';
-                
-                // Refresh stats
-                $stats = $voteService->getVotingStats($entranceId);
-                
-                // Check if protocol was created
-                $meeting = $db->fetchOne("SELECT * FROM meetings WHERE entrance_id = :id", ['id' => $entranceId]);
-                if ($meeting) {
-                    $message = "Голосование завершено! Протокол и договор сформированы автоматически.";
+                // Check for duplicate vote
+                $existingVote = $db->fetchOne(
+                    "SELECT id FROM votes WHERE entrance_id = :entrance_id AND apartment_id = :apartment_id",
+                    ['entrance_id' => $entranceId, 'apartment_id' => $apartment['id']]
+                );
+
+                if ($existingVote) {
+                    http_response_code(409);
+                    $message = "Эта квартира уже проголосовала. Повторное голосование невозможно.";
+                    $messageType = 'error';
+                } else {
+                    $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+                    $voteService->castVote($entranceId, $apartment['id'], $vote, $userId, $clientIp);
+                    $message = "Ваш голос принят! Спасибо за участие.";
+                    $messageType = 'success';
+
+                    // Refresh stats
+                    $stats = $voteService->getVotingStats($entranceId);
+
+                    // Check if protocol was created
+                    $meeting = $db->fetchOne("SELECT * FROM meetings WHERE entrance_id = :id", ['id' => $entranceId]);
+                    if ($meeting) {
+                        $message = "Голосование завершено! Протокол и договор сформированы автоматически.";
+                    }
                 }
             } catch (Exception $e) {
                 $message = "Ошибка при подаче голоса: " . $e->getMessage();

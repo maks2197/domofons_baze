@@ -63,7 +63,8 @@ CREATE TABLE votes (
     ip_address VARCHAR(45),
     FOREIGN KEY (entrance_id) REFERENCES entrances(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-    FOREIGN KEY (apartment_id) REFERENCES apartments(id) ON DELETE CASCADE
+    FOREIGN KEY (apartment_id) REFERENCES apartments(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_vote_per_apartment (entrance_id, apartment_id)
 );
 
 -- Meetings/Protocols table
@@ -122,6 +123,7 @@ CREATE TABLE reviews (
     review_text TEXT,
     ai_moderation_status ENUM('pending', 'approved', 'rejected', 'flagged') DEFAULT 'pending',
     ai_score DECIMAL(3,2),
+    ai_provider VARCHAR(50) NOT NULL DEFAULT 'giga',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (building_id) REFERENCES buildings(id) ON DELETE SET NULL
@@ -134,6 +136,8 @@ CREATE TABLE questions (
     subject VARCHAR(255),
     question_text TEXT NOT NULL,
     ai_suggested_answer TEXT,
+    ai_moderation_status ENUM('pending', 'approved', 'rejected', 'flagged') DEFAULT 'pending',
+    ai_score DECIMAL(3,2),
     status ENUM('open', 'in_progress', 'closed') DEFAULT 'open',
     admin_response TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

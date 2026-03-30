@@ -6,12 +6,31 @@ require_once __DIR__ . '/../src/AIModerationService.php';
 
 session_start();
 
+// Handle logout first (before any HTML output)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['logout'])) {
+    $submittedToken = $_POST['csrf_token'] ?? '';
+    $sessionToken = $_SESSION['csrf_token'] ?? '';
+
+    if (hash_equals($sessionToken, $submittedToken)) {
+        session_destroy();
+        header('Location: admin.php');
+        exit;
+    }
+}
+
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Simple admin authentication (in production, use proper auth)
 $isAdmin = false;
 if (isset($_POST['admin_login'])) {
     $password = $_POST['password'] ?? '';
-    // In production, use proper password hashing and database storage
-    if ($password === 'admin123') { // Change this!
+    $hashedAdminPassword = getenv('ADMIN_PASSWORD_HASH') ?: '';
+
+    if ($hashedAdminPassword && password_verify($password, $hashedAdminPassword)) {
+        session_regenerate_id(true);
         $_SESSION['is_admin'] = true;
         $_SESSION['role'] = 'admin';
         $isAdmin = true;
@@ -182,7 +201,10 @@ $recentPayments = $db->fetchAll("
     </style>
 </head>
 <body>
-    <a href="?logout=1" class="logout">Выйти</a>
+    <form method="POST" style="position: absolute; top: 20px; right: 20px; margin: 0;">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+        <button type="submit" name="logout" value="1" style="background: #e74c3c; padding: 8px 16px; border-radius: 4px; color: white; font-weight: bold; border: none; cursor: pointer;">Выйти</button>
+    </form>
     
     <header>
         <div class="container">
@@ -354,11 +376,3 @@ $recentPayments = $db->fetchAll("
     </div>
 </body>
 </html>
-
-<?php
-if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: admin.php');
-    exit;
-}
-?>

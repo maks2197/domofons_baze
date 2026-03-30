@@ -11,9 +11,11 @@ class AIModerationService {
      * Moderate a message using GigaChat
      */
     public function moderateWithGigaChat(string $text, string $context = 'message'): array {
-        $config = require __DIR__ . '/../config/config.php';
-        
-        if (empty($config['app']['gigachat_client_id']) || empty($config['app']['gigachat_client_secret'])) {
+        require_once __DIR__ . '/Config.php';
+        $gigachatClientId = Config::get('gigachat_client_id', '');
+        $gigachatClientSecret = Config::get('gigachat_client_secret', '');
+
+        if (empty($gigachatClientId) || empty($gigachatClientSecret)) {
             return $this->fallbackModeration($text, 'gigachat');
         }
         
@@ -60,19 +62,27 @@ class AIModerationService {
      * Moderate a message using Yandex AI
      */
     public function moderateWithYandex(string $text, string $context = 'message'): array {
-        $config = require __DIR__ . '/../config/config.php';
-        
-        if (empty($config['app']['yandex_api_key'])) {
+        require_once __DIR__ . '/Config.php';
+        $yandexApiKey = Config::get('yandex_api_key', '');
+
+        if (empty($yandexApiKey)) {
             return $this->fallbackModeration($text, 'yandex');
         }
         
         $prompt = $this->buildModerationPrompt($text, $context);
-        
+
+        $yandexFolderId = Config::get('yandex_folder_id', '');
+        if (empty($yandexFolderId)) {
+            throw new Exception('Yandex folder ID is not configured');
+        }
+
+        $modelUri = "gpt://{$yandexFolderId}/yandexgpt/latest";
+
         $ch = curl_init('https://llm.api.cloud.yandex.net/foundationModels/v1/completion');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
-            'modelUri' => 'gpt://b1g.../yandexgpt/latest',
+            'modelUri' => $modelUri,
             'completionOptions' => [
                 'stream' => false,
                 'temperature' => 0.1
@@ -84,7 +94,7 @@ class AIModerationService {
         ]));
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
-            'Authorization: ApiKey ' . $config['app']['yandex_api_key']
+            'Authorization: ApiKey ' . $yandexApiKey
         ]);
         
         $response = curl_exec($ch);
@@ -105,8 +115,10 @@ class AIModerationService {
      * Get GigaChat access token
      */
     private function getGigaChatToken(): ?string {
-        $config = require __DIR__ . '/../config/config.php';
-        
+        require_once __DIR__ . '/Config.php';
+        $gigachatClientId = Config::get('gigachat_client_id', '');
+        $gigachatClientSecret = Config::get('gigachat_client_secret', '');
+
         $ch = curl_init('https://ngw.devices.sberbank.ru:9443/api/v2/oauth');
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
@@ -115,9 +127,11 @@ class AIModerationService {
         ]));
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/x-www-form-urlencoded',
-            'Authorization: Basic ' . base64_encode($config['app']['gigachat_client_id'] . ':' . $config['app']['gigachat_client_secret'])
+            'Authorization: Basic ' . base64_encode($gigachatClientId . ':' . $gigachatClientSecret)
         ]);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // For development only
+        // SSL verification - set to false only in development
+        $appEnv = getenv('APP_ENV') ?: 'production';
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $appEnv !== 'development');
         
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -237,14 +251,15 @@ class AIModerationService {
      */
     public function moderateReview(int $userId, int $buildingId, string $reviewText, int $rating): array {
         $result = $this->moderateWithGigaChat($reviewText, 'review');
-        
+
         $reviewId = $this->db->insert('reviews', [
             'user_id' => $userId,
             'building_id' => $buildingId,
             'rating' => $rating,
             'review_text' => $reviewText,
             'ai_moderation_status' => $result['status'],
-            'ai_score' => $result['score']
+            'ai_score' => $result['score'],
+            'ai_provider' => $result['provider'] ?? 'giga'
         ]);
         
         return [
@@ -259,15 +274,17 @@ class AIModerationService {
      */
     public function moderateQuestion(int $userId, string $subject, string $questionText): array {
         $moderationResult = $this->moderateWithGigaChat($questionText, 'question');
-        
+
         // Generate AI-suggested answer
         $suggestedAnswer = $this->generateAnswerSuggestion($questionText);
-        
+
         $questionId = $this->db->insert('questions', [
             'user_id' => $userId,
             'subject' => $subject,
             'question_text' => $questionText,
             'ai_suggested_answer' => $suggestedAnswer,
+            'ai_moderation_status' => $moderationResult['status'] ?? 'pending',
+            'ai_score' => $moderationResult['score'] ?? null,
             'status' => 'open'
         ]);
         
@@ -282,9 +299,10 @@ class AIModerationService {
      * Generate AI-suggested answer for a question
      */
     private function generateAnswerSuggestion(string $questionText): string {
-        $config = require __DIR__ . '/../config/config.php';
-        
-        if (empty($config['app']['gigachat_client_id'])) {
+        require_once __DIR__ . '/Config.php';
+        $gigachatClientId = Config::get('gigachat_client_id', '');
+
+        if (empty($gigachatClientId)) {
             return 'Спасибо за ваш вопрос. Наш менеджер свяжется с вами в ближайшее время.';
         }
         

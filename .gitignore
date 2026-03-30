@@ -17,6 +17,9 @@ venv/
 .env.local
 .env.*
 
+# Uploads
+uploads/
+
 # Logs and temp files
 *.log
 *.tmp

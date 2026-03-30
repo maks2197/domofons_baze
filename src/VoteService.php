@@ -39,9 +39,14 @@ class VoteService {
     /**
      * Cast a vote for an apartment
      */
-    public function castVote(int $entranceId, int $apartmentId, string $vote, ?int $userId = null, ?string $ipAddress = null): bool {
+    public function castVote(int $entranceId, int $apartmentId, string $vote, ?int $userId = null, string $ipAddress = ''): bool {
+        // Validate vote value
+        if (!in_array($vote, ['yes', 'no'], true)) {
+            throw new InvalidArgumentException("Vote must be 'yes' or 'no', got: {$vote}");
+        }
+
         $this->db->beginTransaction();
-        
+
         try {
             // Record the vote
             $this->db->insert('votes', [
@@ -49,7 +54,7 @@ class VoteService {
                 'apartment_id' => $apartmentId,
                 'user_id' => $userId,
                 'vote' => $vote,
-                'ip_address' => $ipAddress ?? $_SERVER['REMOTE_ADDR'] ?? ''
+                'ip_address' => $ipAddress
             ]);
             
             // Update apartment vote status
@@ -74,17 +79,17 @@ class VoteService {
      * Check if voting threshold is reached and create protocol if so
      */
     public function checkVotingThreshold(int $entranceId): ?array {
-        $config = require __DIR__ . '/../config/config.php';
-        $threshold = $config['app']['voting_threshold'];
-        
+        require_once __DIR__ . '/Config.php';
+        $threshold = (int)Config::get('voting_threshold', 51);
+
         // Get voting statistics
         $stats = $this->getVotingStats($entranceId);
-        
+
         if ($stats['percentage_yes'] >= $threshold) {
             // Create meeting protocol
             return $this->createMeetingProtocol($entranceId, $stats);
         }
-        
+
         return null;
     }
     
@@ -329,25 +334,26 @@ HTML;
      * Generate Telegram invite link
      */
     public function generateTelegramInvite(int $entranceId): string {
-        $config = require __DIR__ . '/../config/config.php';
-        
-        if (empty($config['app']['telegram_bot_token'])) {
+        require_once __DIR__ . '/Config.php';
+        $telegramBotToken = Config::get('telegram_bot_token', '');
+
+        if (empty($telegramBotToken)) {
             return '';
         }
-        
+
         $entrance = $this->db->fetchOne("SELECT * FROM entrances WHERE id = :id", ['id' => $entranceId]);
-        
+
         // Create chat via Telegram Bot API
         $chatName = "Подъезд №{$entrance['entrance_number']} - Домофон";
-        
+
         // Note: This requires proper Telegram Bot API implementation
         // For now, return a placeholder
         $inviteLink = "https://t.me/joinchat/PLACEHOLDER_{$entranceId}";
-        
+
         $this->db->update('entrances', [
             'telegram_invite_link' => $inviteLink
         ], 'id = :id', ['id' => $entranceId]);
-        
+
         return $inviteLink;
     }
 }

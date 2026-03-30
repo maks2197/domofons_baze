@@ -6,6 +6,8 @@ require_once __DIR__ . '/../src/AIModerationService.php';
 
 session_start();
 
+define('MAX_APARTMENTS', 500);
+
 $db = Database::getInstance();
 $voteService = new VoteService();
 $config = require __DIR__ . '/../config/config.php';
@@ -20,11 +22,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $city = trim($_POST['city'] ?? '');
                 $entranceNumber = (int)($_POST['entrance_number'] ?? 0);
                 $totalApartments = (int)($_POST['total_apartments'] ?? 0);
-                
+
+                // Enforce apartment limits
+                if ($totalApartments < 1) {
+                    $message = "Количество квартир должно быть не менее 1";
+                    break;
+                }
+                if ($totalApartments > MAX_APARTMENTS) {
+                    $message = "Количество квартир не может превышать " . MAX_APARTMENTS;
+                    break;
+                }
+
                 if ($address && $entranceNumber > 0 && $totalApartments > 0) {
                     // Find or create building
-                    $building = $db->fetchOne("SELECT id FROM buildings WHERE address = :address", ['address' => $address]);
-                    
+                    $building = $db->fetchOne(
+                        "SELECT id FROM buildings WHERE address = :address AND city = :city",
+                        ['address' => $address, 'city' => $city]
+                    );
+
                     if (!$building) {
                         $buildingId = $db->insert('buildings', [
                             'address' => $address,
@@ -33,6 +48,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         ]);
                     } else {
                         $buildingId = $building['id'];
+                        // Increment entrance count for existing building
+                        $db->query(
+                            "UPDATE buildings SET total_entrances = total_entrances + 1 WHERE id = :id",
+                            ['id' => $buildingId]
+                        );
                     }
                     
                     // Create entrance
@@ -61,9 +81,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         "SELECT id FROM apartments WHERE entrance_id = :entrance_id AND apartment_number = :number",
                         ['entrance_id' => $entranceId, 'number' => $apartmentNumber]
                     );
-                    
+
                     if ($apartment) {
-                        $voteService->castVote($entranceId, $apartment['id'], $vote);
+                        $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+                        $voteService->castVote($entranceId, $apartment['id'], $vote, null, $clientIp);
                         $message = "Ваш голос принят!";
                     } else {
                         $message = "Квартира не найдена";
